@@ -2,7 +2,7 @@ import os
 import time
 import pickle
 from transformers import GPT2TokenizerFast
-from Data_preprocessing.config import Config
+from data_preparation.config import Config
 
 """
 This script initializes a GPT-2 tokenizer (Fast version) and prepares it for tokenizing
@@ -11,7 +11,7 @@ splits, appends EOS tokens, and saves the tokenized sequences as pickle files fo
 
 Usage:
     Run as a module to tokenize the dataset:
-    > python -m Data_preprocessing.tokenizer.gpt2_tokenizer
+    > python -m data_preparation.tokenizer.gpt2_tokenizer
 
 """
 

@@ -2,7 +2,7 @@ import torch
 import pickle
 import os
 from torch.utils.data import Dataset
-from Data_preprocessing.config import Config
+from data_preparation.config import Config
 
 class TokenizedDataset(Dataset):
     def __init__(self, subset_name, tokenizer_dir, block_size):
@@ -19,7 +19,7 @@ class TokenizedDataset(Dataset):
             raise FileNotFoundError(
                 f"Tokenized file not found: {tokenized_file_path}\n"
                 "Please tokenize the dataset first by running:\n"
-                " python -m Data_preprocessing.tokenizer.gpt2_tokenizer\n"
+                " python -m data_preparation.tokenizer.gpt2_tokenizer\n"
             )
         with open(tokenized_file_path, 'rb') as f:
             self.sequences = pickle.load(f)

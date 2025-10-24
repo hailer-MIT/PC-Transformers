@@ -1,7 +1,7 @@
 
 from torch.utils.data import DataLoader, DistributedSampler
-from Data_preprocessing.datasets.merged_sets import TokenizedDataset
-from Data_preprocessing.config import Config
+from data_preparation.datasets.merged_sets import TokenizedDataset
+from data_preparation.config import Config
 from utils.model_utils import pad_collate_fn, load_tokenizer
 
 def get_datasets():
