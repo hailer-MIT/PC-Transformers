@@ -3,6 +3,7 @@ __pycache__/
 *.pkl
 *.json
 *.pt
+*.log
 !tuning/bayesian_tuning_results.txt 
 *.db
 *.whl
@@ -12,3 +13,10 @@ venv/
 *.egg-info/
 checkpoints/
 data_preparation/data/opwb/
+
+.DS_Store
+.vscode/
+.antigravity/
+.lightning/
+.md
+ziz/

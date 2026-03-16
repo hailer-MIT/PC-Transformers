@@ -37,10 +37,12 @@ class PCLayer(nn.Module):
         self.lateral_connections: Dict[str, LateralConnections] = {}
         
         self._x_cache: Dict[str, torch.Tensor] = {}
+        self._v_cache: Dict[str, torch.Tensor] = {}
         self._mu_cache: Dict[str, torch.Tensor] = {}
         self._error_cache: Dict[str, torch.Tensor] = {}
-        self._energy = 0.0
+        self._energy_list = []
         self._errors = []
+        self._converged = False
     
     def register_lateral(self, layer_type: str, size: int):
         """Create and register lateral connections for layer_type."""
@@ -69,99 +71,73 @@ class PCLayer(nn.Module):
         input_ids: Optional[torch.Tensor] = None,
         position_ids: Optional[torch.Tensor] = None,
         flash: bool = False,
-        kv_cache: Optional[Tuple[torch.Tensor, torch.Tensor]] = None,  # ADD THIS
+        kv_cache: Optional[Tuple[torch.Tensor, torch.Tensor]] = None, 
         use_cache: bool = False, 
     ):
         """Perform one predictive coding inference step."""
         self._reset_step_state()
         x = self._get_cached_state(layer_type)
+        v = self._v_cache.get(layer_type, None)
+        
+        if self._converged:
+            return x, self.get_mu(layer_type)
 
         if layer_type == "embed":
             mu, mu_word, mu_pos, bu_err = step_embed(
-                t,
-                T,
-                target_activity,
-                layer,
-                layer_type,
-                input_ids,
-                position_ids,
-                self.local_lr,
-                self.clamp_value,
-                self.energy_fn_name,
-                requires_update,
-                layer_norm=layer_norm,
+                t, T, target_activity, layer, layer_type, input_ids, position_ids,
+                self.local_lr, self.clamp_value, self.energy_fn_name, requires_update, layer_norm=layer_norm,
             )            
-            # store for later retrieval
             self._x_cache["embed"] = (mu_word, mu_pos)
             self._mu_cache["embed"] = mu.detach().clone()
             if bu_err is not None:
                 self._error_cache["embed"] = bu_err.detach().clone()
 
-            # compute energy
             error = target_activity - mu
             energy, step_errors = finalize_step(mu, target_activity, error, t, layer_type, self.energy_fn_name)
-            self._energy += energy
+            self._energy_list.append(energy)
             self._errors.extend(step_errors)
             return mu_word, mu_pos
         
         elif layer_type == "attn":
             lateral_conn = self.lateral_connections.get(layer_type, None)
-            x, mu, bu_err, new_kv_cache = step_attn(
-                t,
-                T,
-                target_activity,
-                x,
-                lateral_conn,
-                proj_layers,
-                layer_type,
-                self.local_lr,
-                self.clamp_value,
-                self.energy_fn_name,
-                self.update_bias,
-                requires_update,
-                self.num_heads,
-                self.n_embed,
-                td_err=td_err, 
-                layer_norm=layer_norm,
-                flash=flash, 
-                kv_cache=kv_cache,  
-                use_cache=use_cache,
+            x, v, mu, bu_err, new_kv_cache = step_attn(
+                t, T, target_activity, x, lateral_conn, proj_layers, layer_type,
+                self.local_lr, self.clamp_value, self.energy_fn_name, self.update_bias,
+                requires_update, self.num_heads, self.n_embed, td_err=td_err, 
+                layer_norm=layer_norm, flash=flash, kv_cache=kv_cache, use_cache=use_cache, v=v
             )
-            # Store cache for retrieval
             if use_cache:
                 self._last_kv_cache = new_kv_cache
         
         else:
             lateral_conn = self.lateral_connections.get(layer_type, None)
-            x, mu, bu_err = step_linear(
-                t,
-                T,
-                target_activity,
-                x,
-                layer, 
-                lateral_conn,  
-                layer_type,
-                self.local_lr, 
-                self.clamp_value, 
-                self.energy_fn_name, 
-                self.update_bias, 
-                requires_update,
-                td_err=td_err, 
-                layer_norm=layer_norm
+            x, v, mu, bu_err = step_linear(
+                t, T, target_activity, x, layer, lateral_conn, layer_type,
+                self.local_lr, self.clamp_value, self.energy_fn_name, self.update_bias,
+                requires_update, td_err=td_err, layer_norm=layer_norm, v=v
             )
             
         # cache and stats
         self._mu_cache[layer_type] = mu.detach().clone()  
         if bu_err is not None: 
-         self._error_cache[layer_type] = bu_err.detach().clone()   
+            self._error_cache[layer_type] = bu_err.detach().clone()   
         
         error = target_activity - mu
         energy, step_errors = finalize_step(mu, target_activity, error, t, layer_type, self.energy_fn_name)
-        self._energy += energy
+        
+        # Energy-Aware Termination: If energy change is < 0.1%, mark as converged
+        if len(self._energy_list) > 0:
+            prev_energy = self._energy_list[-1]
+            relative_diff = abs(energy - prev_energy) / (prev_energy + 1e-9)
+            if relative_diff < 0.001: # 0.1% threshold
+                self._converged = True
+
+        self._energy_list.append(energy)
         self._errors.extend(step_errors)
 
-        # update x cache
+        # update caches
         self._x_cache[layer_type] = x
+        self._v_cache[layer_type] = v
         return x, mu
 
     def init_x(
@@ -228,12 +204,14 @@ class PCLayer(nn.Module):
 
     def get_energy(self) -> Optional[float]:
         """Get the accumulated energy for the layer."""
-        return float(self._energy)
+        return float(sum(self._energy_list)) if self._energy_list else 0.0
 
     def clear_energy(self):
         """Clear the stored energy and cached states for the layer."""
-        self._energy = 0.0
+        self._energy_list = []
+        self._converged = False
         self._x_cache.clear()
+        self._v_cache.clear()
         self._mu_cache.clear()
         
     def get_errors(self) -> list:

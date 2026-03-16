@@ -58,9 +58,9 @@ def step_embed(
             word_layer.weight.data.index_add_(0, flat_input_ids, delta)
             pos_layer.weight.data.index_add_(0, flat_position_ids, delta)
             
-    if t == T - 1:
-           finalize_step(mu, target, error, t, layer_type, energy_fn_name)
-  
+    # if t == T - 1:
+    #        finalize_step(mu, target, error, t, layer_type, energy_fn_name)
+
     return mu, mu_word, mu_pos, error
     
 def step_linear(
@@ -77,12 +77,15 @@ def step_linear(
     update_bias: bool,
     requires_update: bool,
     td_err: Optional[torch.Tensor],
-    layer_norm: Optional[nn.Module], 
+    layer_norm: Optional[nn.Module],
+    v: Optional[torch.Tensor] = None,
    ):
     """
     Predictive coding step for linear-like layers.
-    Returns: (updated_x, mu, bu_err)
+    Returns: (updated_x, updated_v, mu, bu_err)
     """
+    if v is None:
+        v = torch.zeros_like(x)
     if layer_norm is not None and layer_type == "fc1":
         x_input = layer_norm(x)
     elif layer_type == "fc2":
@@ -108,12 +111,14 @@ def step_linear(
     
     if lateral_conn is not None:
         delta_x = lateral_conn.forward(x, error)
-        x = x + local_lr * delta_x
+        v = 0.9 * v + local_lr * delta_x
+        x = x + v
 
         if requires_update:
             lateral_conn.update_weights(x.detach())
     else:
-        x= x + local_lr * error 
+        v = 0.9 * v + local_lr * error
+        x = x + v 
 
     x = torch.clamp(x, -abs(clamp_value), abs(clamp_value))
     
@@ -127,10 +132,10 @@ def step_linear(
             delta_b = torch.clamp(delta_b, -0.01, 0.01)
             layer.bias.data.add_(delta_b)
 
-    if t == T - 1:
-        finalize_step(mu, target, error, t, layer_type,energy_fn_name)
+    # if t == T - 1:
+    #     finalize_step(mu, target, error, t, layer_type,energy_fn_name)
 
-    return x, mu, bu_err
+    return x, v, mu, bu_err
 
 def step_attn(
     t: int,
@@ -152,6 +157,7 @@ def step_attn(
     flash: bool = False,
     kv_cache: Optional[Tuple[torch.Tensor, torch.Tensor]] = None,
     use_cache: bool = False,
+    v: Optional[torch.Tensor] = None,
     ):
     """
     Predictive coding step for attention with KV caching support.
@@ -207,14 +213,19 @@ def step_attn(
     bu_err = target - mu  # B, T, D
     error = bu_err - td_err if td_err is not None else bu_err  
                 
+    if v is None:
+        v = torch.zeros_like(x)
+
     if lateral_conn is not None:
         delta_x = lateral_conn.forward(x, error)
-        x = x + local_lr * delta_x
+        v = 0.9 * v + local_lr * delta_x
+        x = x + v
         
         if requires_update:
             lateral_conn.update_weights(x.detach())
     else:
-        x = x + local_lr * error
+        v = 0.9 * v + local_lr * error
+        x = x + v
 
     x = torch.clamp(x, -abs(clamp_value), abs(clamp_value))
 
@@ -254,10 +265,10 @@ def step_attn(
                         delta_b_v = (v_slice.mean(dim=(0, 1)) / (B * S))
                         v_proj.bias.data[start:end] += torch.clamp(local_lr * delta_b_v, -clamp_value, clamp_value)
  
-    if t == T - 1:
-        finalize_step(mu, target, error, t, layer_type,energy_fn_name)
-     
-    return x, mu, bu_err, new_kv_cache
+    # if t == T - 1:
+    #     finalize_step(mu, target, error, t, layer_type,energy_fn_name)
+
+    return x, v, mu, bu_err, new_kv_cache
     
 ENERGY_FUNCTIONS = {
     "pc_e": lambda mu, x: ((mu - x) ** 2) * 0.5,    
@@ -275,7 +286,8 @@ def finalize_step(mu: torch.Tensor, target: torch.Tensor, error: torch.Tensor, t
     device = mu.device
     target = target.to(device)
     error = error.to(device)
-    energy = float(energy_fn(mu, target, energy_fn_name).mean().item())
+    # energy = float(energy_fn(mu, target, energy_fn_name).mean().item())
+    energy = float(energy_fn(mu, target, energy_fn_name).sum().item())
     errors = [{"step": t, "type": layer_type, "error": error.mean().item()}]
     return energy, errors
     

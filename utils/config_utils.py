@@ -22,6 +22,7 @@ def load_best_config():
         "n_embed": 512,
         "dropout": 0.46876145412214615,
         "T": 2,
+        # "T": 30,
         "num_heads": 32,
         "n_blocks": 12,
         "update_bias": False,
