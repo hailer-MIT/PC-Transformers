@@ -13,5 +13,5 @@ venv/
 checkpoints/
 data_preparation/data/opwb/
 
-.png
-.log
+*.png
+*.log
