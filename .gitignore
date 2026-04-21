@@ -12,3 +12,6 @@ venv/
 *.egg-info/
 checkpoints/
 data_preparation/data/opwb/
+
+.png
+.log

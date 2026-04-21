@@ -11,7 +11,7 @@ valid_path = data_dir / "validation.csv"
 test_path = data_dir / "test.csv"
 
 # Tokenizer parameters
-vocab_size = 5000 # Optimized subword-centric vocabulary size
+vocab_size = 11707 # Optimized subword-centric vocabulary size
 
 # [MASK] exists only for BERT masked language modeling.
 # special_tokens = ["[UNK]", "[CLS]", "[SEP]", "[PAD]", "[MASK]"]
