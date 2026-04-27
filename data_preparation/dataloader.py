@@ -30,7 +30,7 @@ def get_loaders(distributed: bool = False):
         batch_size= batch_size, 
         sampler=train_sampler,
         shuffle=(train_sampler is None), 
-        drop_last=True
+        drop_last=False
     )
     valid_loader = DataLoader(
         valid_dataset, 

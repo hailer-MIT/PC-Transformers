@@ -3,8 +3,8 @@ from pathlib import Path
 from torch.utils.data import Dataset
 
 class EncodedDataset(Dataset):
-    """ Dataset that splits token ID tensors into input-target sequences for next-token prediction."""
-    def __init__(self, file_path, block_size):
+    """ Dataset that splits token ID tensors into input-target sequences for next-token prediction, with padding."""
+    def __init__(self, file_path, block_size, pad_token_id=3):
         self.block_size = block_size
 
         if not Path(file_path).exists():
@@ -12,9 +12,16 @@ class EncodedDataset(Dataset):
         
         tokens = torch.load(file_path, weights_only=False)
 
-        total_len = (len(tokens) // (block_size + 1)) * (block_size + 1)
-        tokens = tokens[:total_len]
-        self.sequences = tokens.view(-1, block_size + 1)
+        # Calculate how much padding we need to avoid throwing away data
+        chunk_size = block_size + 1
+        remainder = len(tokens) % chunk_size
+        
+        if remainder > 0:
+            padding_len = chunk_size - remainder
+            padding = torch.full((padding_len,), pad_token_id, dtype=tokens.dtype)
+            tokens = torch.cat([tokens, padding])
+            
+        self.sequences = tokens.view(-1, chunk_size)
 
     def __len__(self):
         return len(self.sequences)
