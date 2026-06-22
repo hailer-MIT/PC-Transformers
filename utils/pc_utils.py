@@ -60,6 +60,46 @@ def rotate_half_transpose(x: torch.Tensor) -> torch.Tensor:
     x2 = x[..., x.shape[-1] // 2 :]
     return torch.cat((x2, -x1), dim=-1)
 
+def rmsnorm_backward(x: torch.Tensor, norm: nn.RMSNorm, grad_output: torch.Tensor) -> torch.Tensor:
+    """
+    Manual backward pass through RMSNorm.
+
+    In the forward pass, RMSNorm computes:
+        rms    = sqrt( mean(x^2) + eps )
+        x_norm = x / rms
+        y      = x_norm * gamma          (gamma is the learned per-dimension scale)
+
+    This function receives grad_output = dE/dy (the gradient of the loss/energy
+    with respect to the OUTPUT of RMSNorm) and returns dE/dx (the gradient with
+    respect to the INPUT x), applying the chain rule through the normalization.
+
+    The formula is:
+        grad_x_norm = grad_output * gamma          (undo the gamma scaling)
+        dE/dx = (1/rms) * (grad_x_norm - x_norm * mean(grad_x_norm * x_norm, dim=-1))
+
+    The subtracted term removes the component of the gradient that points radially
+    inward/outward (i.e. along x itself), because RMSNorm constrains the vector
+    to lie on a scaled sphere — the gradient must be tangent to that surface.
+
+    Args:
+        x:           Pre-norm input tensor, shape [B, S, H].
+                     This is the original x BEFORE layer_norm was applied.
+        norm:        The nn.RMSNorm module, used to read eps and gamma (norm.weight).
+        grad_output: dE/d(norm_output), shape [B, S, H].
+                     The gradient arriving at this point from the operations above.
+
+    Returns:
+        dx:          dE/dx, shape [B, S, H].
+                     The corrected gradient to use for updating x.
+    """
+    eps = norm.eps
+    gamma = norm.weight                                                          # shape [H]
+    rms = torch.sqrt((x ** 2).mean(dim=-1, keepdim=True) + eps)                 # [B, S, 1]
+    x_norm = x / rms                                                             # [B, S, H]
+    grad_x_norm = grad_output * gamma                                            # [B, S, H]
+    dx = (1.0 / rms) * (grad_x_norm - x_norm * (grad_x_norm * x_norm).mean(dim=-1, keepdim=True))
+    return dx
+
 def step_embed(
     t: int,
     T: int,
@@ -149,7 +189,12 @@ def step_linear(
         error_proj= dE_dmu @ layer.weight
             
     error = error_proj- td_err if td_err is not None else error_proj  
-   
+
+    # For fc1, the forward used x_input = layer_norm(x), so error is dE/d(layer_norm(x)).
+    # We must pass it through the RMSNorm backward to obtain dE/dx before updating x.
+    if layer_norm is not None and layer_type == "fc1":
+        error = rmsnorm_backward(x, layer_norm, error)
+
     if lateral_conn is not None:
         x = x + inference_lr * lateral_conn.forward(x, error)
         if requires_update:
@@ -316,6 +361,12 @@ def step_attn(
 
     # Update delta_x with TD error if provided
     delta_x = delta_x - td_err if td_err is not None else delta_x
+
+    # delta_x is currently dE/d(x_norm) because it was accumulated from gradients
+    # w.r.t. x_norm (the output of layer_norm(x)). The forward used x_norm = layer_norm(x),
+    # so we must pass delta_x through the RMSNorm backward to obtain dE/dx before updating x.
+    if layer_norm is not None:
+        delta_x = rmsnorm_backward(x, layer_norm, delta_x)
 
     if lateral_conn is not None:
         delta_x = lateral_conn.forward(x, delta_x)
