@@ -85,6 +85,8 @@ def rmsnorm_backward(x: torch.Tensor, norm: nn.RMSNorm, grad_output: torch.Tenso
         x:           Pre-norm input tensor, shape [B, S, H].
                      This is the original x BEFORE layer_norm was applied.
         norm:        The nn.RMSNorm module, used to read eps and gamma (norm.weight).
+                     When norm.eps is None (PyTorch 2.5 default), torch.finfo(x.dtype).eps
+                     is used as the fallback, matching PyTorch's own internal behaviour.
         grad_output: dE/d(norm_output), shape [B, S, H].
                      The gradient arriving at this point from the operations above.
 
@@ -92,7 +94,7 @@ def rmsnorm_backward(x: torch.Tensor, norm: nn.RMSNorm, grad_output: torch.Tenso
         dx:          dE/dx, shape [B, S, H].
                      The corrected gradient to use for updating x.
     """
-    eps = norm.eps
+    eps = norm.eps if norm.eps is not None else torch.finfo(x.dtype).eps
     gamma = norm.weight                                                          # shape [H]
     rms = torch.sqrt((x ** 2).mean(dim=-1, keepdim=True) + eps)                 # [B, S, 1]
     x_norm = x / rms                                                             # [B, S, H]
